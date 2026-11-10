@@ -1,15 +1,15 @@
 const r4os = @import("r4os");
 
 comptime {
-    asm (r4os.r4dev.protocolEntriesAsm("midi_init", "midi_shutdown", "midi_query", "midi_dispatch"));
+    if (!@import("builtin").is_test) asm (r4os.technical2.protocolEntriesAsm("midi_init", "midi_shutdown", "midi_query", "midi_dispatch"));
 }
 
-export fn midi_init(api: *const r4os.r4dev.ProtocolApi) callconv(.c) i32 {
-    var ctx = r4os.r4dev.ProtocolContext.init(api);
-    ctx.logInfo("MIDI.R4P init");
-    _ = ctx.registerRole("audio.midi", .audio, 0);
-    _ = ctx.setStatus(.active, "MIDI event protocol active");
-    return 0;
+export fn midi_init(api: *const r4os.r4dev.ProtocolApi2) callconv(.c) i32 {
+    const ctx = r4os.r4dev.ProtocolContext2.init(api);
+    if (!ctx.requires(.{ "register_role", "set_status" })) return r4os.abi.err_no_fn;
+    const registered = ctx.registerRole("audio.midi", .audio, 0);
+    if (registered != 0) return registered;
+    return ctx.setStatus(.active, "MIDI event protocol active");
 }
 
 export fn midi_shutdown() callconv(.c) i32 {
@@ -107,9 +107,11 @@ fn selfTest(op: *r4os.abi.AudioMidiOp) void {
 }
 
 fn requestFromBuffer(buffer: *const r4os.abi.ProtocolBuffer) ?*r4os.abi.AudioMidiOp {
-    if (buffer.data == null) return null;
-    if (buffer.len < @sizeOf(r4os.abi.AudioMidiOp)) return null;
-    return @ptrCast(@alignCast(buffer.data.?));
+    const native = r4os.native_protocol_view;
+    // These are caller-owned native classifier records, not timed PCM/device
+    // submissions. Their exclusive dispatch loan ends at this return.
+    var metadata = buffer.*;
+    return (native.InOut(r4os.abi.AudioMidiOp).init(&metadata, native.Policy.record(r4os.abi.AudioMidiOp, .inout, .prefix)) catch return null).value;
 }
 
 fn note(comptime text: []const u8) [64]u8 {
